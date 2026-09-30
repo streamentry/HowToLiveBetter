@@ -106,7 +106,16 @@ function highlightHtml(s, terms) {
 
 const xrefKeys = (ctx, sec, spec) => {
   const ns = [];
-  for (const part of String(spec).split(ctx.reSep)) {
+  // 先认整串区间，再按分隔符切：英文的 listSep 里含 "to" 和 "-"，先切的话
+  // "8 to 11" 被切成 "8" 和 "11"，区间再也认不出来（和页面里 xrefKeys 同样的顺序）。
+  const whole = String(spec).trim();
+  const wr = ctx.reXRange.exec(whole);
+  if (wr) {
+    const a = +wr[1], b = +wr[2];
+    if (b >= a && b - a <= 40) for (let i = a; i <= b; i++) ns.push(i);
+    return ns.map(n => `${sec}-${n}`).filter(k => ctx.items.has(k));
+  }
+  for (const part of whole.split(ctx.reSep)) {
     const r = ctx.reXRange.exec(part);
     if (r) {
       const a = +r[1], b = +r[2];
@@ -159,6 +168,9 @@ function termifyHtml(ctx, html) {
       return tok;
     }
     if (depth > 0) return tok;
+    // lastIndex 按段清零：页面里每个文本节点单独走一遍 test + exec（test 会推进 lastIndex，
+    // 所以 exec 前重设为 0）。这里不逐段清零的话，上一段剩下的位置会带到下一段，
+    // 下一段开头的词就漏标了——漏标只影响 abbr，不丢字，但两边行为必须一致。
     ctx.glossRe.lastIndex = 0;
     let out2 = '', last = 0, m;
     let hit = false;
@@ -213,7 +225,7 @@ export function renderText(ctx, text, terms = [], withTerms = true, urlsLast = f
   return withTerms ? termifyHtml(ctx, out) : out;
 }
 
-function splitSrc(ctx, text) {
+export function splitSrc(ctx, text) {
   const open = ctx.cfg.srcOpen, close = ctx.cfg.srcClose;
   const parts = [];
   let buf = '', depth = 0;

@@ -15,7 +15,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { locale, readRepo } from './site';
 import { loadLocale, hasReadme } from './load';
 import { LOCALES } from './site';
-import { createCtx, renderText } from './render';
+import { createCtx, renderText, splitSrc } from './render';
 import { buildGloss } from './parse';
 import { fill } from '../../../tools/site/build.mjs';
 
@@ -92,16 +92,15 @@ for (const meta of LOCALES) {
   // ** 和 \ 转义还原；来源栏先按 ;； 切分（渲染时 splitSrc 就是这么拆的，括号里的分号除外，
   // 这里多切了也无妨——切出来的词一定更短，一定还在）。
   const displayUrl = u => u.replace(/^https?:\/\//, '').replace(/\/$/, '').replace(/[).,;:，。；：、]+$/, '').toLowerCase();
-  // [文字](地址) 只留文字：页面里 mkLink 拿 textContent=m[1]，地址只进 href，
-  // 可见文本里没有它（爬虫从 href 里看）。裸 URL 才留显示地址。
-  // 裸 URL 的字符集照抄页面里的 URL_RE（它不认 CJK 和全角括号，匹配到 pub4 就停；
-  // 检查侧要是写成 [^\s>]+，会把后面紧跟的中文一起吞进“地址”，造出一个两边都没有的词）。
-  const tokensOf = raw => String(raw)
-    .replace(/<(https?:\/\/[^>\s]+)>/g, '$1')
-    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, '$1')
+  // 原文取词。urlsLast（来源栏）时裸链接会被攒到最后，地址和它前后的文字是分开的三块，
+  // 取词时两边都补空格，不然会造出“前文+地址”粘在一起的词——渲染出来它们根本不挨着。
+  // 行内链接（[文字](地址)）不受影响：它永远原地渲染，只取文字。
+  const tokensOf = (raw, urlsLast) => String(raw)
+    .replace(/<(https?:\/\/[^>\s]+)>/g, urlsLast ? ' $1 ' : '$1 ')
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, '$1 ')
     .replace(/\*\*((?:\\\*|[^*\n])+)\*\*/g, '$1')
     .replace(/\\([*_])/g, '$1')
-    .replace(/<?https?:\/\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,=%]+>?/g, m => displayUrl(m.replace(/^<|>$/g, '')))
+    .replace(/<?https?:\/\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,=%]+>?/g, m => (urlsLast ? ' ' : '') + displayUrl(m.replace(/^<|>$/g, '')) + ' ')
     .toLowerCase().split(/\s+/).map(t => t.trim()).filter(t => t.length >= 4);
   const norm0 = s => String(s).replace(/<[^>]*>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .toLowerCase().replace(/\s+/g, ' ').trim();
@@ -114,17 +113,23 @@ for (const meta of LOCALES) {
     // CUR_SEC 按卡片所属的节走（页面里 renderCard 第一行干的就是这个）：
     // 不设的话「本节第 X 条」在检查侧解析不出来，渲染侧却链上了，两边对不上。
     rctx.curSec = e.sec;
-    // 来源栏多切一刀（见上面注释），别的栏整段取词
+    // 来源栏按页面真正的 splitSrc 切（括号里的分号不算分隔符），别的栏整段取词。
+    // 自己另写一套切法，切口和页面不一样，渲染出来就对不上——之前这么错过。
     const jobs = [];
     for (const [name, f] of fieldsOf(e)) {
-      if (name === '来源') for (const part of String(f).split(/[;；]/)) jobs.push([name, part]);
+      if (name === '来源') for (const part of splitSrc(rctx, String(f))) jobs.push([name, part]);
       else jobs.push([name, f]);
     }
     for (const [name, f] of jobs) {
       const rendered = norm0(renderText(rctx, f, [], true, name === '来源'));
       if (rendered && !pageText.includes(rendered)) { if (miss++ < 3) fail(meta.code, `第 ${s.n} 节第 ${e.n} 条${name}没进页面`, JSON.stringify(rendered.slice(0, 50))); continue; }
-      for (const tok of tokensOf(f)) {
-        if (!rendered.includes(tok)) { if (miss++ < 3) fail(meta.code, `第 ${s.n} 节第 ${e.n} 条${name}丢词`, JSON.stringify(tok)); break; }
+      for (const tok of tokensOf(f, name === '来源')) {
+        if (!rendered.includes(tok)) {
+          if (miss++ < 3) {
+            fail(meta.code, `第 ${s.n} 节第 ${e.n} 条${name}丢词`, JSON.stringify(tok));
+          }
+          break;
+        }
       }
     }
     if (miss > 10) break;
