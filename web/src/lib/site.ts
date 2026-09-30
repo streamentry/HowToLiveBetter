@@ -47,6 +47,9 @@ export const at = (code, p) => {
 };
 export const readRepo = p => read(p);
 
-/** 仓库根的绝对路径，给 fs 用 */
-export const repoPath = p => new URL(p, ROOT).pathname;
+/** 仓库根的绝对路径，给 fs 用。
+    走 fileURLToPath 而不是 URL.pathname：正文文件名是中文（book/01-不要早死.md），
+    pathname 会把它们百分号编码，existsSync 就一律 false——症状是「目录列了 34 节，
+    正文一份都还没有」。 */
+export const repoPath = p => fileURLToPath(new URL(p, ROOT));
 export { read };

@@ -14,34 +14,48 @@ import { parseReadme, parseGlossary } from './parse';
 import { loadLocale, hasReadme } from './load';
 import { existsSync } from 'node:fs';
 
-/** 把模板里原版 parseReadme 的源码抠出来，组装成一个能直接调用的函数 */
+/** 把模板里原版 parseReadme 的源码抠出来，组装成一个能直接调用的函数。
+    原版还依赖几个定义在函数外面的量（SITE、COST_W、fieldRe、RE_COST…RE_NOTE、RE_DISPUTE），
+    那几行也一起抠进来，不然会报 RE_COST is not defined。 */
 function originalParser(templateSrc, cfg) {
-  const start = templateSrc.indexOf('function parseReadme(md){');
-  if (start < 0) throw new Error('page.template.html 里找不到 parseReadme');
-  // 找到这个函数的结尾：下一个顶格的 }
-  let depth = 0, end = -1;
-  for (let i = start; i < templateSrc.length; i++) {
-    const c = templateSrc[i];
-    if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+  // 原版还依赖几个定义在函数外面的东西：fieldRe 和 RE_COST…RE_NOTE、RE_DISPUTE。
+  // 只抠这几行声明（按行匹配，不整段切——整段切会把用 location 的 UI 代码带进来）。
+  const decl = [];
+  for (const line of templateSrc.split('\n')) {
+    if (/^\/\/ 条目字段名各语言不同/.test(line)) continue;               // 只是注释
+    if (/^const fieldRe = /.test(line)) decl.push(line);
+    else if (/^const RE_DISPUTE = /.test(line)) decl.push(line);
+    else if (/^const RE_COST = fieldRe/.test(line)) decl.push(line);
+    else if (/^ {6}RE_GRADE = fieldRe/.test(line)) decl.push('  ' + line.trim());
   }
-  if (end < 0) throw new Error('parseReadme 的结尾没对上');
-  const src = templateSrc.slice(start, end);
+  if (decl.length < 4) throw new Error(`page.template.html 里只抠到 ${decl.length} 行声明，模板结构可能变了`);
+  const fn = templateSrc.slice(
+    templateSrc.indexOf('function parseReadme(md){'),
+    endOfFunction(templateSrc, templateSrc.indexOf('function parseReadme(md){')),
+  );
+  const src = decl.join('\n') + '\n' + fn;
 
-  // 原版读的是页面里的全局量：SITE（字段名、争议、待核实）和 COST_W。
-  // 这里按 locale 配置造一份同名同形状的，函数体一行不改。
-  const f = new Function('SITE', 'COST_W', `${src}; return parseReadme;`);
+  // 原版读的是页面里的全局量：SITE 和 COST_W。这里按 locale 配置造一份同名同形状的，
+  // 被抠出来的那几行代码一个字不改。
   const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const fieldRe = label => new RegExp('^- ' + esc(label) + '\\s*(.+)$');
   const SITE = {
-    fields: cfg.fields,
-    dispute: cfg.dispute,
-    todo: cfg.todo,
+    fields: cfg.fields, dispute: cfg.dispute, todo: cfg.todo,
+    urlTrim: cfg.urlTrim, xref: cfg.xref,
   };
   const COST_W = { money: { '0': 0, '少': 1, '多': 2 }, time: { '少': 0, '中': 1, '多': 2 }, will: { '否': 0, '些': 1, '是': 2 } };
-  // 原版把 RE_COST 等从 SITE.fields 现拼，页面里也是这么定义的；补上以防它引用
-  void fieldRe;
-  return f(SITE, COST_W);
+  void esc;
+  return new Function('SITE', 'COST_W', `${src}; return parseReadme;`)(SITE, COST_W);
+}
+
+/** 从函数体的第一个 { 起，配平括号找到结尾的下标 */
+function endOfFunction(src, start) {
+  let depth = 0;
+  for (let i = start; i < src.length; i++) {
+    const c = src[i];
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return i + 1; }
+  }
+  return -1;
 }
 
 const FIELDS = ['sec', 'n', 'title', 'cost', 'human', 'gain', 'grade', 'src', 'note',

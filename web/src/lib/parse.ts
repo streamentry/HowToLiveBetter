@@ -12,9 +12,13 @@
 
 const COST_W = { money: { '0': 0, '少': 1, '多': 2 }, time: { '少': 0, '中': 1, '多': 2 }, will: { '否': 0, '些': 1, '是': 2 } };
 
-/** 字段名在各语言里不同（中文「- 成本：」、英文「- Cost:」），从 locale 配置来，不写死 */
-function fieldRe(label) {
-  return new RegExp('^- ' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(.+)$');
+/** 字段名在各语言里不同（中文「- 成本：」、英文「- Cost:」），从 locale 配置来，不写死。
+    尾部照抄原版：默认 '(.*)' 会把标签后面的空格一起收进来（页面那边就是这个行为，
+    渲染时那点空格看不出来，但要和它逐字段一致就不能改）；证据等级另给一个窄的
+    '\\s*([ABC])'，只取字母，「A（争议）」不会连后缀一起进来。 */
+function fieldRe(name, cfg, tail) {
+  const label = cfg.fields[name].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('^- ' + label + (tail || '(.*)'));
 }
 
 /**
@@ -23,13 +27,12 @@ function fieldRe(label) {
  * @returns {Array} sections
  */
 export function parseReadme(md, cfg) {
-  const F = cfg.fields;
-  const RE_COST = fieldRe(F.cost);
-  const RE_HUMAN = fieldRe(F.human);
-  const RE_GAIN = fieldRe(F.gain);
-  const RE_GRADE = fieldRe(F.grade);
-  const RE_SRC = fieldRe(F.src);
-  const RE_NOTE = fieldRe(F.note);
+  const RE_COST = fieldRe('cost', cfg);
+  const RE_HUMAN = fieldRe('human', cfg);
+  const RE_GAIN = fieldRe('gain', cfg);
+  const RE_GRADE = fieldRe('grade', cfg, '\\s*([ABC])');
+  const RE_SRC = fieldRe('src', cfg);
+  const RE_NOTE = fieldRe('note', cfg);
   const RE_DISPUTE = new RegExp('^' + cfg.dispute);
 
   const lines = md.split(/\r?\n/);
