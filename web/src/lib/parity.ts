@@ -10,7 +10,7 @@
 // 只比页面真正用来渲染和筛选的字段。原文不用比：两边的语料读的是同一个文件。
 import { readFileSync } from 'node:fs';
 import { LOCALES, locale, readRepo, readmePath, at, repoPath } from './site';
-import { parseReadme, parseGlossary } from './parse';
+import { parseReadme, buildGloss } from './parse';
 import { loadLocale, hasReadme } from './load';
 import { existsSync } from 'node:fs';
 
@@ -75,7 +75,9 @@ console.log(`解析一致性校验：${live.map(l => l.code).join('、')}\n`);
 for (const meta of live) {
   const cfg = locale(meta.code);
   const data = loadLocale(meta.code, cfg);
-  const md = [data.readme, ...data.files.map(f => f.text)].join('\n\n');
+  // 运行时真正的输入是正文文件拼起来（README 只给术语表，不进节解析）——
+  // 按这个比，loadLocale 里拼什么这里就拼什么，两边入口必须一致。
+  const md = data.files.map(f => f.text).join('\n\n');
 
   let want;
   try {
@@ -87,6 +89,29 @@ for (const meta of live) {
   }
 
   const got = parseReadme(md, cfg);
+
+  // README 里有一行 "### 5. ……" 的盐的例子：它要是哪天进了节解析，两边会一起多出
+  // 一节孤儿条目。所以再断言一次「README 加进来也不多出东西」，多出来就说明入口
+  // 又对不上了，而不是内容真变了。
+  const withReadme = parseReadme([data.readme, ...data.files.map(f => f.text)].join('\n\n'), cfg);
+  if (withReadme.length !== got.length || withReadme.reduce((n, s) => n + s.entries.length, 0) !== got.reduce((n, s) => n + s.entries.length, 0))
+    report(meta.code, 'README 拼入', 'README 拼进来之后节数或条数变了：入口没对齐，孤儿条目漏进了某一边');
+
+  // 术语表也比：预渲染的 abbr 和运行时 termify 用的必须是同一份行表。
+  // 原版 parseGlossary 带副作用（写 GLOSS_RE/GLOSS_BY），这里只取它的返回值比行。
+  try {
+    const glossSrc = templateSrc.slice(templateSrc.indexOf('function parseGlossary(md){'), endOfFunction(templateSrc, templateSrc.indexOf('function parseGlossary(md){')));
+    const glossFn = new Function('SITE', `${glossSrc}; return parseGlossary;`)({ glossary: cfg.glossary, glossarySep: cfg.glossarySep, glossarySplit: cfg.glossarySplit });
+    const wantGloss = glossFn(data.readme);
+    const gotGloss = buildGloss(data.readme, cfg).rows;
+    if (wantGloss.length !== gotGloss.length) report(meta.code, '术语表行数', `新 ${gotGloss.length} vs 原 ${wantGloss.length}`);
+    else for (let i = 0; i < wantGloss.length; i++) {
+      const a = wantGloss[i], b = gotGloss[i];
+      if (a.term !== b.term || a.meaning !== b.meaning || !!a.latin !== !!b.latin) { report(meta.code, `术语表第 ${i + 1} 行`, `${a.term} vs ${b.term}`); break; }
+    }
+  } catch (err) {
+    report(meta.code, '术语表解析', err.message);
+  }
 
   if (got.length !== want.length) {
     report(meta.code, '节数', `新 ${got.length} vs 原 ${want.length}`);
@@ -118,4 +143,4 @@ if (bad) {
   process.exit(1);
 }
 console.log('解析一致：站内渲染和构建时预渲染看到的是同一本书。');
-void readmePath; void at; void repoPath; void existsSync; void readFileSync; void parseGlossary;
+void readmePath; void at; void repoPath; void existsSync; void readFileSync;

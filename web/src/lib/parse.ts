@@ -84,22 +84,37 @@ export function parseReadme(md, cfg) {
   return sections;
 }
 
-/** 术语表：从 README 的「读懂数字（术语表）」那一节里抠 术语 / 释义 两种行。
-    原样搬自页面里的 parseGlossary()。 */
-export function parseGlossary(md, cfg) {
+/** 术语表：原样搬自页面里的 parseGlossary()（tools/site/page.template.html）。
+    注意它和 parseReadme 不一样：字段取值之外，这里连「怎么写正则」都是逻辑的一部分
+    （长词优先的最长匹配、拉丁词的前后守卫），抄的时候不能只抄行、把正则重写了。
+    返回行表；附带的 re/by 给渲染时的 termify 用，和页面里 GLOSS_RE/GLOSS_BY 同一份。 */
+export function buildGloss(md, cfg) {
+  const m = new RegExp('^##\\s*' + cfg.glossary + '[^\\n]*\\n([\\s\\S]*?)(?=^##\\s)', 'm').exec(md);
+  if (!m) return { rows: [], re: null, by: {} };
   const rows = [];
-  const re = new RegExp('^\\|?\\s*`?([^|`]+?)`?\\s*\\|\\s*([^|]+?)\\s*\\|?\\s*$');
-  let inGloss = false;
-  for (const raw of md.split(/\r?\n/)) {
-    const line = raw.trimEnd();
-    if (/^#{1,3}\s/.test(line)) { inGloss = /glossary/.test(line) || line.includes('读懂数字') || line.includes('术语'); continue; }
-    if (!inGloss) continue;
-    if (!line.trim() || /^\|?[\s:|-]+\|/.test(line)) continue;
-    const m = re.exec(line);
-    if (!m) continue;
-    const term = m[1].trim(), meaning = m[2].trim();
-    if (!term || !meaning || term === '术语') continue;
-    rows.push({ term, meaning, latin: /^[A-Za-z0-9%. ]+$/.test(term) });
+  for (const line of m[1].split(/\r?\n/)) {
+    const c = /^\|\s*(.+?)\s*\|\s*(.+?)\s*\|$/.exec(line);
+    if (!c || c[1] === '术语' || /^-+$/.test(c[1])) continue;
+    for (const t of c[1].split(cfg.glossarySep)) {
+      const term = t.trim();
+      if (!term) continue;
+      rows.push({ term, meaning: c[2], latin: cfg.glossarySplit ? new RegExp(cfg.glossarySplit).test(term) : /^[A-Za-z0-9%. ]+$/.test(term) });
+    }
   }
-  return rows;
+  rows.sort((a, b) => b.term.length - a.term.length);
+  // 合并成一条正则：长词在前保证最长匹配，拉丁术语要求前后不是字母数字
+  const escRe = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const alt = list => list.map(g => escRe(g.term)).join('|');
+  const parts = [];
+  const latin = rows.filter(g => g.latin), cjk = rows.filter(g => !g.latin);
+  if (latin.length) parts.push(`(?<![A-Za-z0-9])(?:${alt(latin)})(?![A-Za-z0-9])`);
+  if (cjk.length) parts.push(`(?:${alt(cjk)})`);
+  const re = parts.length ? new RegExp(parts.join('|'), 'g') : null;
+  const by = Object.fromEntries(rows.map(g => [g.term, g]));
+  return { rows, re, by };
+}
+
+/** 行表。渲染之外的用途（比如只数有多少术语）走这个。 */
+export function parseGlossary(md, cfg) {
+  return buildGloss(md, cfg).rows;
 }

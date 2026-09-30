@@ -42,10 +42,10 @@ export function loadLocale(code, cfg) {
   }
   if (!files.length) throw new Error(`${readmePath(code)} 的目录里列了 ${listed.length} 节，正文一份都还没有`);
 
-  // 页面原来的做法是 parts.join('\n\n') 之后整体解析，节和条目的边界靠 markdown 标题。
-  // 这里照抄，顺序也一样（README 在前），免得解析结果和页面那边不一致。
-  const md = [readme, ...files.map(f => f.text)].join('\n\n');
-  const sections = parseReadme(md, cfg);
+  // 页面原来的做法是 parts.join('\n\n') 之后整体解析（init 里读的就是 SITE.files 那几份，
+  // README 只拿去解析术语表，不进节）。这里照抄：README 里有一行 "### 5. ……" 的盐的例子，
+  // 进了解析就是一条没人要的孤儿条目——现在两边都掉，不代表以后也不会，入口对齐最保险。
+  const sections = parseReadme(files.map(f => f.text).join('\n\n'), cfg);
   if (!sections.length) throw new Error(`${readmePath(code)} 解析出来 0 节`);
   const glossary = parseGlossary(readme, cfg);
 

@@ -6,10 +6,15 @@
 // 复制一份就多一处会过时的地方——域名、界面文案、统计数字都得改两遍。
 // 这里只读，不改：写入口仍然只有 tools/ 那几个脚本。
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// 这个文件在 web/src/lib/，所以到仓库根是 '../../../'（少一层都到不了根，会读空）
-const ROOT = new URL('../../../', import.meta.url);
+// 仓库根。直接跑 tsx 脚本时按文件位置算（../../../ 到仓库根）；
+// 进 Astro 构建时会被打包，import.meta.url 指到构建缓存里，
+// 这时按环境变量 HOWTOLIVEBETTER_ROOT 来——web/astro.config.mjs 会在构建前把它指到仓库根。
+// 少一层都到不了根，会读空；中文文件名走 fileURLToPath（见 repoPath）。
+const ROOT = process.env.HOWTOLIVEBETTER_ROOT
+  ? pathToFileURL(process.env.HOWTOLIVEBETTER_ROOT.replace(/\/?$/, '/'))
+  : new URL('../../../', import.meta.url);
 const read = p => readFileSync(new URL(p, ROOT), 'utf8').replace(/\r\n/g, '\n');
 const readJSON = p => JSON.parse(read(p));
 

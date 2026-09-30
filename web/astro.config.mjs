@@ -12,6 +12,12 @@
 //    所以内容集合用 glob loader 指回原来的目录（见 src/content.config.ts）：
 //    一份内容，两边读，各读各的。
 import { defineConfig } from 'astro/config';
+import { fileURLToPath } from 'node:url';
+
+// Astro 构建会把 web/src/lib 和 tools/site/build.mjs 打包，
+// 打包后 import.meta.url 指到构建缓存，那两处按文件位置算仓库根就算偏了。
+// 这里先把仓库根钉死，后面它们都按这个来（直接跑 node/tsx 时不用这个变量）。
+process.env.HOWTOLIVEBETTER_ROOT ??= fileURLToPath(new URL('../', import.meta.url));
 
 export default defineConfig({
   site: 'https://streamentry.github.io',
