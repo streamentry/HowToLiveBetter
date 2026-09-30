@@ -1,0 +1,102 @@
+// 正文解析：从 README 的目录和 book/*.md 里把节和条目拆出来。
+//
+// 这段是从检索页原来的 parseReadme() 原样搬过来的（tools/site/page.template.html），
+// 只改了参数：原来读全局的 SITE 和 COEF，函数体一行没动。
+// 搬过来是为了让它在构建时跑——Astro 用它在构建期把卡片渲进 HTML，
+// 爬虫和弱网就不用等 JS 了。页面那边还留着同一份逻辑（读内联的正文），
+// 那是给「本地改一点样式立刻看效果」和离线副本兜底的；两边必须同时改，
+// 改判据是 tools/site/build.mjs --check 和 web 的 npm run check 都绿。
+//
+// 成本权重和档位规则原来写死在页面里（COST_W / e.ratio 两行），
+// tools/sync-stats.mjs 会拿它和那两行比对，这里是第三份，照抄。
+
+const COST_W = { money: { '0': 0, '少': 1, '多': 2 }, time: { '少': 0, '中': 1, '多': 2 }, will: { '否': 0, '些': 1, '是': 2 } };
+
+/** 字段名在各语言里不同（中文「- 成本：」、英文「- Cost:」），从 locale 配置来，不写死 */
+function fieldRe(label) {
+  return new RegExp('^- ' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(.+)$');
+}
+
+/**
+ * @param {string} md       README + 全部正文拼起来（和原来页面里一样，节和条目的结构都在里面）
+ * @param {object} cfg      locale(code) 的返回值：fields / dispute / todo 是解析用的
+ * @returns {Array} sections
+ */
+export function parseReadme(md, cfg) {
+  const F = cfg.fields;
+  const RE_COST = fieldRe(F.cost);
+  const RE_HUMAN = fieldRe(F.human);
+  const RE_GAIN = fieldRe(F.gain);
+  const RE_GRADE = fieldRe(F.grade);
+  const RE_SRC = fieldRe(F.src);
+  const RE_NOTE = fieldRe(F.note);
+  const RE_DISPUTE = new RegExp('^' + cfg.dispute);
+
+  const lines = md.split(/\r?\n/);
+  const sections = [];
+  let sec = null, entry = null;
+  const flush = () => { if (entry && sec) { sec.entries.push(entry); } entry = null; };
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    let m;
+    if ((m = /^#{1,2} (\d+)\. (.+)$/.exec(line))) { flush(); sec = { n: m[1], title: m[2].trim(), intro: [], entries: [] }; sections.push(sec); continue; }
+    if (/^#{1,2} /.test(line)) { flush(); sec = null; continue; }
+    if (!sec) continue;
+    if ((m = /^### (\d+)\. (.+)$/.exec(line))) { flush(); entry = { sec: sec.n, n: m[1], title: m[2].trim(), cost: '', human: '', gain: '', grade: '', src: '', note: '', money: '', time: '', will: '', level: '', lens: '' }; continue; }
+    if ((m = /^<!--\s*成本标签:\s*(.*?)\s*-->/.exec(line)) && entry) {
+      // 成本标签注释照抄中文（钱/时间/毅力/收益/口径 + 0|少|多、大|中|小、死亡率|金钱|时间|自由）：
+      // 这些取值就是筛选和地址栏里的值，三种语言共用一份，跨语言共享的链接才对得上
+      for (const kv of m[1].split(/\s+/)) {
+        const [k, v] = kv.split('=');
+        if (k === '钱') entry.money = v;
+        if (k === '时间') entry.time = v;
+        if (k === '毅力') entry.will = v;
+        if (k === '收益') entry.level = v;
+        if (k === '口径') entry.lens = v;
+      }
+      continue;
+    }
+    if (entry) {
+      if ((m = RE_COST.exec(line))) entry.cost = m[1];
+      else if ((m = RE_HUMAN.exec(line))) entry.human = m[1];
+      else if ((m = RE_GAIN.exec(line))) entry.gain = m[1];
+      else if ((m = RE_GRADE.exec(line))) entry.grade = m[1];
+      else if ((m = RE_SRC.exec(line))) entry.src = m[1];
+      else if ((m = RE_NOTE.exec(line))) entry.note = m[1];
+      continue;
+    }
+    if (line) sec.intro.push(line);   // 第一条之前的每一段导读都收，不止第一段
+  }
+  flush();
+
+  for (const s of sections) for (const e of s.entries) {
+    e.dispute = RE_DISPUTE.test(e.note);
+    e.todo = cfg.todo.some(w => (e.src + e.gain + e.note + e.cost).includes(w));
+    e.cs = (COST_W.money[e.money] ?? 0) + (COST_W.time[e.time] ?? 0) + (COST_W.will[e.will] ?? 0);
+    e.ratio = e.level === '大' ? (e.cs === 0 ? '极高' : (e.cs <= 2 ? '高' : '一般'))
+      : e.level === '中' ? (e.cs === 0 ? '高' : '一般') : '一般';
+    e.hay = [e.title, e.human, e.cost, e.gain, e.note, e.src, e.grade].join('\n')
+      .replace(/\*\*/g, '').replace(/\\([*_])/g, '$1').toLowerCase();
+  }
+  return sections;
+}
+
+/** 术语表：从 README 的「读懂数字（术语表）」那一节里抠 术语 / 释义 两种行。
+    原样搬自页面里的 parseGlossary()。 */
+export function parseGlossary(md, cfg) {
+  const rows = [];
+  const re = new RegExp('^\\|?\\s*`?([^|`]+?)`?\\s*\\|\\s*([^|]+?)\\s*\\|?\\s*$');
+  let inGloss = false;
+  for (const raw of md.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (/^#{1,3}\s/.test(line)) { inGloss = /glossary/.test(line) || line.includes('读懂数字') || line.includes('术语'); continue; }
+    if (!inGloss) continue;
+    if (!line.trim() || /^\|?[\s:|-]+\|/.test(line)) continue;
+    const m = re.exec(line);
+    if (!m) continue;
+    const term = m[1].trim(), meaning = m[2].trim();
+    if (!term || !meaning || term === '术语') continue;
+    rows.push({ term, meaning, latin: /^[A-Za-z0-9%. ]+$/.test(term) });
+  }
+  return rows;
+}

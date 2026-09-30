@@ -53,7 +53,7 @@ for (const srcPath of files){
   let trouble = 0;
   const pieces = [];
   for (let k = 0; k < parts.length; k++){
-    const want = src.blocks[k].join('\n');
+    const want = src.blocks[k].flat().join('\n');   // blocks[k] 是「这一块有哪几条」
     const got = read(`${dir}/${parts[k]}`);
     const a = entrySkeleton(want, strings(SOURCE.code));
     const b = entrySkeleton(got, strings(locale));
