@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://streamentry.github.io/HowToLiveBetter/sitemap.xml
