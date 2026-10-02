@@ -100,8 +100,8 @@
 
 ### 站点怎么上线
 - **部署用 GitHub Pages 的 workflow 发布**（`.github/workflows/web.yml`，2026-09-30 从分支发布切过来的）：CI 里跑 `web/` 的 Astro 构建，产物（`web/dist`）直接发 Pages，**不入库**。`.nojekyll` 由构建拷进产物，别删根上那份，删了构建也跟着没了。
-- **构建时把卡片直接写进 HTML**（预渲染）：爬虫和关掉 JS 的读者不用等 JS 就看到全文。这是 Astro 迁移的全部理由——之前是客户端渲染，`en/index.html` 里 95 KB 全是框架，一个正文字都没有，AI 抓取器和链接预览只能看到空壳。
-- **预渲染和运行时是同一份逻辑的两份拷贝**：`web/src/lib/parse.ts` 抄模板的 `parseReadme`，`web/src/lib/render.ts` 抄模板的 `build()` 初次渲染。两份各自演化迟早对不上，对不上时爬虫和读者看到的就不是一本书了。所以有两道机器检查，`web/` 里跑 `npm run verify` 一次全过：① `npm run check`（`parity.ts`）把原版 `parseReadme` 从模板里抠出来逐字段比；② `render-check.ts` 跑在构建产物上，查每条六个栏的每个词都在 HTML 里、hydration 钩子齐、引用不悬空。**改模板的渲染逻辑必须同时改 `render.ts`，改判据是这两道都绿。**
+- **构建时把卡片直接写进 HTML**（预渲染）：爬虫和关掉 JS 的读者不用等 JS 就看到全文。这是 Astro 迁移的全部理由——之前是客户端渲染，`en/index.html` 里 95 KB 全是框架，一个正文字都没有，AI 抓取器和链接预览只能看到空壳。（英文那份页面现在叫 `index.html`，在根上，`en/index.html` 是转发页。）
+- **预渲染和运行时是同一份逻辑的两份拷贝**：`web/src/lib/parse.ts` 抄模板的 `parseReadme`，`web/src/lib/render.ts` 抄模板的 `build()` 初次渲染。两份各自演化迟早对不上，对不上时爬虫和读者看到的就不是一本书了。所以有三道机器检查，`web/` 里跑 `npm run verify` 一次全过：① `npm run check`（`parity.ts`）把原版 `parseReadme` 从模板里抠出来逐字段比；② `npm run check-lang`（`lang-switcher-check.ts`）把构建产物里那段 `buildLangPicker` 抠出来、给它一份假的 `location` 真跑，逐个落点核对语言下拉的地址、`?q=` 和锚点；③ `render-check.ts` 跑在构建产物上，查每条六个栏的每个词都在 HTML 里、hydration 钩子齐、引用不悬空。**改模板的渲染逻辑必须同时改 `render.ts`，改判据是这三道都绿。**
 - **浏览器里还是原来那个页面**：预渲染只负责首屏和爬虫，JS 跑起来后索引现有 DOM（模板里的 `indexSsgDom`），筛选、搜索、弹窗、高亮全是原来的逻辑。对不上就回退重建并 `console.warn`——正常构建永远不该走到那里。
 - **域名只写在 `tools/site/site.json` 的 `site` 和 `repo` 两个值里**，别的文件一处都不许再抄。`locales.json` 里每种语言的 `canonical` 和 `repoBlob` 是从这两个值推出来的，构建时逐个对一遍（`checkUrls()`），**对不上直接抛错**，不会出现「Pages 发到 A 域名、页面自称是 B 域名」。`sitemap.xml` 和 `robots.txt` 由 Astro 的两个 endpoint 从同一处生成，域名单独抄一遍就会漏。
 - **四种链接要分清，改域名时只动前两种**：① 站点链接（`*.github.io/…`）和② 面向读者的 GitHub 链接（页面里的文件链接、`/releases/download/…`）跟着 `site.json` 走；③ `git clone` 那行、④ 「写明出处／Credit the source」和 Star History 图这三处**永远指向上游 `eternity4719/HowToLiveBetter`**，它们是在说明这本书的出处，不是本站的地址。2026-09-30 换域名时按这个分的，核对的判据是 `grep -c eternity4719 README.md en/README.md` 各应为 3，且都在那三类位置上。
@@ -114,7 +114,7 @@
 
 ### 译文怎么维护
 - **流程和判据写在 `tools/i18n/BRIEF.md`**，翻译任务的提示词和结构检查的判据是同一份。词表 `tools/i18n/glossary.{en,vi}.mjs`。
-- 一次翻一节。`node tools/i18n/split.mjs book/NN-*.md --locale en` 把它切成十来个条一块放进 `.i18n/en/<节名>/partNN.md`（**已翻过的块不会被覆盖**，改参数重跑不会冲掉译文），翻译完 `node tools/i18n/join.mjs book/NN-*.md --locale en` 逐块校一遍再合成 `en/book/NN-*.md`。
+- 一次翻一节。`node tools/i18n/split.mjs book/NN-*.md --locale en` 把它切成十来个条一块放进 `.i18n/en/<节名>/partNN.md`（**已翻过的块不会被覆盖**，改参数重跑不会冲掉译文），翻译完 `node tools/i18n/join.mjs book/NN-*.md --locale en` 逐块校一遍再合成 `en/book/NN-*.md`。一轮翻好几节用 `bash tools/i18n/join-ready.sh en vi`——它按「块里还带 `- 成本：` 就是没翻」挑出翻全了的节，挨个 join。
 - `node tools/i18n/check.mjs`（CI 的「译文检查」job）拿中文原文逐条对译文：条数条号、六个字段的有无与顺序、**成本标签注释逐字照抄**、证据等级、争议与待核实的条数、**收益/成本/来源三栏的数字一个不多一个不少**（量级词换算除外，见 `tools/i18n/structure.mjs` 里 `numbersOf` 的说明）、「第 X 条」指路的条号节号、来源与备注里的链接数量。判据在 `structure.mjs`，join 和 check 共用同一份。
 - **译文不许改数字**。中文「167 万」在英文里只能写成 1,670,000、在越南文里只能写成 1.670.000，这是量级换算，`structure.mjs` 放行；除此之外数字对不上就是错。这一层机器查得出来，所以译文不需要作者审。
 - 越南文里 **条目 = "mục"，节 = "phần"，法条的款 = "khoản (2)"**——三个词不能混。「第 13 节」写成 "phần 13"，写成 "mục 13" 读者就当成第 13 条了。
