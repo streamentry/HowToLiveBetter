@@ -104,6 +104,21 @@ function highlightHtml(s, terms) {
   return out;
 }
 
+// 裸的条目号如果紧挨着法条名或文号，就不是本书的条目引用，不做成链接。
+// 文号和法条名按 BRIEF 规则 6 照抄中文不译，所以中文的标记在三种语言里都在，
+// 一套判据够用。判据与 tools/i18n/structure.mjs 的 statuteFilter 相同。
+const XREF_STATUTE = {
+  before: /(《[^》]*》|〔[^〕]*〕|\d+\s*号|该(?:解释|意见|办法|规定|条例|通知|法)|[^\s，。；：、（）「」]{0,8}(?:法|条例|办法|规定|准则|细则|公约))$/,
+  after: /^[\s]*(?:of|的|của)?[\s]*[^。；;]{0,18}?(《[^》]*》|〔[^〕]*〕|\d+\s*号|该(?:解释|意见|办法|规定|条例|通知|法)|(?:法|条例|办法|规定|准则|细则|公约)\b)/,
+  window: 90,
+};
+function xrefIsStatute(s, index, qualified){
+  if (qualified) return false;                 // 带节号的（「第 8 节第 15 条」）不会是法条
+  const raw = s.slice(Math.max(0, index - XREF_STATUTE.window), index);
+  const bare = raw.replace(/[\s，,、；;：:）)]+$/, '');
+  if (XREF_STATUTE.before.test(raw) || XREF_STATUTE.before.test(bare)) return true;
+  return XREF_STATUTE.after.test(s.slice(index + 1, index + 1 + XREF_STATUTE.window));
+}
 const xrefKeys = (ctx, sec, spec) => {
   const ns = [];
   // 先认整串区间，再按分隔符切：英文的 listSep 里含 "to" 和 "-"，先切的话
@@ -135,6 +150,8 @@ function xrefHtml(ctx, s, terms) {
   let m, last = 0, any = false, out = '';
   while ((m = ctx.reXref.exec(s))) {
     const g = m.groups || {};
+    // 法条条款号不做成条目链接（判据见上面 xrefIsStatute）
+    if (g.secs === undefined && xrefIsStatute(s, m.index, g.sec !== undefined)) continue;
     const keys = g.secs !== undefined
       ? String(g.secs).split(ctx.reSep).map(x => x.trim()).filter(x => ctx.secs.has(x)).map(x => 's' + x)
       : xrefKeys(ctx, g.sec ?? ctx.curSec, g.nums ?? g.nums2 ?? g.nums3 ?? '');
