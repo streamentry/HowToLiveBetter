@@ -111,7 +111,7 @@ function numbersOf(text) {
  * （"items 8 to 11" 要切得开），先切的话 "8 to 11" 被切成 "8" 和 "11"，
  * 区间就再也认不出来——一次翻 22 块之后才发现，第 5 节两处指路报「不见了」。
  */
-function refsOf(text, xref) {
+function refsOf(text, xref, fl, field) {
   if (!xref) return [];
   const range = new RegExp(xref.rangeRe);
   const sep = new RegExp(xref.listSep);   // 正则，不是字面串：英文是 ", and to –" 一串
@@ -136,6 +136,9 @@ function refsOf(text, xref) {
     }
     // 节号缺省就是本节：中文「本节第 3 条」、英文「this section's item 3」
     const sec = g.sec ? 's' + g.sec : '*';
+    // 这一处是不是法条条款号而不是条目引用（见 statuteFilter）。
+    // qualified = 引用自带节号（nums 那一支）；裸的那一支才可能是法条。
+    if (fl && fl.isStatute(text, m.index, g.sec !== undefined)) continue;
     // 先认整串区间再按分隔符切：英文的 listSep 里含 "to" 和 "-"，
     // 先切的话 "8 to 11" 变成 "8" 和 "11"，区间再也认不出来
     const spec = String(g.nums ?? g.nums2 ?? g.nums3 ?? '').trim();
@@ -191,7 +194,12 @@ function decorate(e, S) {
     cost: numbersOf(e.fields.cost ?? ''),
     src: numbersOf(e.fields.src ?? ''),
   };
-  e.refs = refsOf(all, S.xref);
+  // 指路逐栏算，不把四栏先拼起来：判「是不是法条」要看这一处的上下文，
+  // 拼成一整块就分不清引用落在哪一栏里了。
+  const fl = statuteFilter();
+  e.refs = ['human', 'gain', 'note', 'src']
+    .flatMap(f => refsOf(e.fields[f] ?? '', S.xref, fl, f))
+    .sort();
   e.links = all.match(/https?:\/\//g)?.length ?? 0;
   e.order = FIELDS.filter(f => e.fields[f] !== undefined);
   // trimStart：字段名和内容之间可能有空格（「- Ghi chú: Tranh cãi. …」，越南文那边
@@ -205,9 +213,43 @@ function decorate(e, S) {
 function label(S, f) { return S.fields[f].replace(/[：:]$/, ''); }
 
 /**
- * 逐条比。返回问题清单（空数组就是这块对了）。dstLabel 是给报告前缀用的语言名。
- * 这一套就是 check.mjs 的判据，抽出来是为了 join 逐块校时用同一份。
+ * 裸的条目号（第 N 条 / item N / mục N，没带节号的那种）到底是指本书的条目，还是法条的
+ * 条款号。分错了两个方向都出事：当成条目引用，译文就得把「第 59 条」写成 "item 59"，
+ * 页面上还会做成一个指向第 7 节第 59 条的链接（那一节根本没有第 59 条）；当成法条，
+ * 真引用就静默漏掉了——顺延撞歪之后对照表的 diff 也看不出来。
+ *
+ * 判据是「引用紧挨着的那段文字是不是引文标记」，和 tools/check-refs.mjs 对中文正文
+ * 用的 CITE 同一套。带节号的（「第 8 节第 15 条」「item 15 in section 8」）不参与判断——
+ * 法条不会写「第 8 节」，那是本书的写法。
+ *
+ * 标记为什么在英越正文里也在：法条名、文号（〔2023〕14 号、劳部发〔1995〕309 号）
+ * 按 BRIEF 规则 6 照抄中文，不译（译了读者就没法对着原文核了）。所以判据可以照搬，
+ * 不用给每种语言单写一套「Article N of the Xxx Law」的猜法。
  */
+export function statuteFilter() {
+  // 标记在引用「前面」：中文「法发〔2023〕14 号第 15 条」「该解释第 11 条」，末尾锚定，
+  // 所以只在这半边上成立（跟 tools/check-refs.mjs 的 CITE 同一套）。
+  const CITE_BEFORE = /(《[^》]*》|〔[^〕]*〕|\d+\s*号|该(?:解释|意见|办法|规定|条例|通知|法)|[^\s，。；：、（）「」]{0,8}(?:法|条例|办法|规定|准则|细则|公约))$/;
+  // 标记在引用「后面」：英文把 of 放在后面，「item 12 of 法发〔2023〕14 号」。
+  // 这条不锚定结尾——文号之后还有别的字。
+  const CITE_AFTER = /^[\s]*(?:of|的|của)?[\s]*[^。；;]{0,18}?(《[^》]*》|〔[^〕]*〕|\d+\s*号|该(?:解释|意见|办法|规定|条例|通知|法)|(?:法|条例|办法|规定|准则|细则|公约)\b)/;
+  const WINDOW = 90;   // CITE_BEFORE 是 $ 锚定的：窗口只管能往回看多远，
+                         // 尾部始终贴着引用，所以开大一点只会更准，不会更松。
+  return {
+    /** 命中 = 这一处当法条，不算条目引用 */
+    isStatute(txt, index, qualified) {
+      if (qualified) return false;               // 带节号的（「第 8 节第 15 条」）不会是法条
+      // 尾巴上可能挂着标点（「（…309 号）」「《…意见》」），两种形态都试一遍。
+      // 剥标点那一版不能把 》 和 ） 一起剥掉：剥掉右括号就不再是书名号了，
+      // 「关于依法适用正当防卫制度的指导意见》第 5 条」那种会漏掉。
+      const raw = txt.slice(Math.max(0, index - WINDOW), index);
+      const bare = raw.replace(/[\s，,、；;：:）)]+$/, '');
+      if (CITE_BEFORE.test(raw) || CITE_BEFORE.test(bare)) return true;
+      return CITE_AFTER.test(txt.slice(index + 1, index + 1 + WINDOW));
+    },
+  };
+}
+
 /** 汉字。「」《》里照抄的法条名、书名不算漏译（BRIEF 规则 6 明确允许）。 */
 const han = s => /[㐀-鿿]/.test(s);
 /** 剔掉允许照抄的部分，再看还有没有汉字——有就是漏译。 */
